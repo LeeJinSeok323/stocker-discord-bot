@@ -11,7 +11,7 @@ import re
 load_dotenv()
 SEC_USER_AGENT = os.getenv("SEC_USER_AGENT")
 
-with open("../store/company_tickers.json", "r", encoding="utf-8") as f:
+with open("store/company_tickers.json", "r", encoding="utf-8") as f:
     data = json.load(f)
 
 

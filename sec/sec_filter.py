@@ -1,4 +1,4 @@
-from ..config.db_config import get_db_connection
+from config.db_config import get_db_connection
 
 FILING_TABLE = "sec_filing"
 

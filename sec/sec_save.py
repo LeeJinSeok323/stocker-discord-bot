@@ -3,7 +3,7 @@ SEC 공시 데이터를 저장함
 """
 
 # sec_save.py
-from ..config.db_config import get_db_connection
+from config.db_config import get_db_connection
 
 def save_filing_meta(meta: dict) -> int:
     conn = get_db_connection()
