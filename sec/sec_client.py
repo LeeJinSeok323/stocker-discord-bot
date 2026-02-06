@@ -5,7 +5,7 @@ from datetime import date, timedelta
 
 NO_MEANING_ALERT_DATE_COUNT = 2
 
-ticker = input("티커를 입력하세요.")
+ticker = "BNAI"
 
 submission = fetch.get_sec_submissions(ticker);
 recent = submission["filings"]["recent"]
