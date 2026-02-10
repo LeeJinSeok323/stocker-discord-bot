@@ -1,22 +1,22 @@
 import sec.sec_fetch as fetch
 import sec.sec_filter as filter
-import sec.sec_save as save
 from datetime import date, timedelta
 
 NO_MEANING_ALERT_DATE_COUNT = 2
+TARGET_TICKER = "BNAI"
 
-ticker = "BNAI"
 
-submission = fetch.get_sec_submissions(ticker);
+submission = fetch.get_sec_submissions(TARGET_TICKER)
 recent = submission["filings"]["recent"]
-cutoff = cutoff_str = (date.today() - timedelta(days=NO_MEANING_ALERT_DATE_COUNT)).strftime("%Y-%m-%d")
+cutoff = (date.today() - timedelta(days=NO_MEANING_ALERT_DATE_COUNT)).strftime("%Y-%m-%d")
 
-for i in range(len(recent["accessionNumber"])):
-    filing_date_str = recent["filingDate"][i]
+for accession_no, form_type, filing_date_str in zip(
+    recent["accessionNumber"],
+    recent["form"],
+    recent["filingDate"],
+):
     if filing_date_str < cutoff:
         break
 
-    accession_no = recent["accessionNumber"][i]
-    form_type = recent["form"][i]
-    status = filter.check_filing_status(accession_no, form_type);
+    status = filter.check_filing_status(accession_no, form_type)
     print(status)
