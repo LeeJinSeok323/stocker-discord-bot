@@ -21,7 +21,7 @@ M = {
     "MENTION_NEW_FILING": "@here 새로운 공시가 등록되었습니다!",
     
     # --- 디스코드 방 설정 상수 ---
-    "CATEGORY_NAME": "알림",
+    "CATEGORY_NAME": "SEC 알림",
 
     # --- 명령어 응답 ---
     "CMD_WARN_CHAT_DISABLED": "{mention}, 현재 방에서는 채팅을 칠 수 없어요.",
