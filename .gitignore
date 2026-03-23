@@ -1,0 +1,22 @@
+# Environments
+.env
+.venv/
+venv/
+ENV/
+
+# Local Data/Config
+config.json
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE Settings
+.idea/
+*.iml
+
+# Node / JS
+node_modules/
+package-lock.json
+package.json
