@@ -6,7 +6,8 @@ from config.db_config import get_db_connection
 genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
 
 # 요약 모델 
-summary_model = genai.GenerativeModel("gemini-1.5-flash")
+model_name = os.environ.get("GEMINI_MODEL_NAME", "gemini-3.1-flash-lite-preview")
+summary_model = genai.GenerativeModel(model_name)
 
 def log_gemini_api(action_type: str, ticker: str, form_type: str, prompt: str, response: str = None, error_message: str = None):
     """
