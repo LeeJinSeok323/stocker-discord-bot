@@ -25,7 +25,7 @@ class SECBot(commands.Bot):
         print(M["LOG_BOT_READY"].format(user=self.user, user_id=self.user.id))
         print("------")
 
-    @tasks.loop(minutes=5.0)
+    @tasks.loop(seconds=20.0)
     async def check_sec_loop(self):
         print(M["LOG_TASK_START"])
         all_subs = get_all_subscriptions()
@@ -36,13 +36,21 @@ class SECBot(commands.Bot):
             for t in tickers:
                 ticker_to_users.setdefault(t, []).append(user_id_str)
         
-        for ticker, user_ids in ticker_to_users.items():
-            if not user_ids: # 구독자가 없으면 스킵
-                continue
+        active_tickers = [t for t, users in ticker_to_users.items() if users]
+        if not active_tickers:
+            return
+
+        import asyncio
+        # 병렬 처리를 위해 각 티커별 작업을 생성
+        async def process_ticker(ticker):
             try:
-                new_filings = check_new_filings(ticker)
+                # check_new_filings는 동기 함수이므로 루프를 막지 않게 run_in_executor 사용 권장되나
+                # 여기서는 단순화를 위해 직접 호출하거나 비동기 래핑 고려
+                # 우선은 속도를 위해 병렬 실행 구조로 변경
+                loop = asyncio.get_event_loop()
+                new_filings = await loop.run_in_executor(None, check_new_filings, ticker)
+                
                 for filing in new_filings:
-                    # 임베드 메시지 구성
                     embed = discord.Embed(
                         title=M["EMBED_NEW_FILING_TITLE"].format(ticker=ticker, form_type=filing['form_type']),
                         url=filing.get("filing_html_url") or filing.get("filing_txt_url") or "https://www.sec.gov",
@@ -54,16 +62,16 @@ class SECBot(commands.Bot):
                     if filing.get("accepted_at"):
                         embed.add_field(name=M["EMBED_FIELD_ACCEPTED"], value=filing.get("accepted_at", M["EMBED_VALUE_NA"]), inline=False)
                     
-                    # 티커 전용 채널에 한 번만 메시지 발송 (권한이 있는 유저만 볼 수 있음)
                     channel_id = get_ticker_channel(ticker)
                     if channel_id:
                         channel = self.get_channel(int(channel_id))
                         if channel:
                             await channel.send(content=M["MENTION_NEW_FILING"], embed=embed)
-                        else:
-                            print(M["LOG_TASK_NO_CHANNEL"].format(channel_id=channel_id, ticker=ticker))
             except Exception as e:
                 print(M["LOG_TASK_ERR_CHECK"].format(ticker=ticker, err=e))
+
+        # 모든 티커를 동시에 처리
+        await asyncio.gather(*(process_ticker(t) for t in active_tickers))
 
     @check_sec_loop.before_loop
     async def before_check_sec_loop(self):
