@@ -48,6 +48,12 @@ def check_new_filings(ticker: str):
         if not status["should_notify"]:
             continue
 
+        try:
+            full_text = fetch.get_filing_detail(submission, accession_no)
+            save.save_filing_text(accession_no, full_text)
+        except Exception as e:
+            print(f"Failed to save local text for {accession_no}: {e}")
+
         acc_no_clean = accession_no.replace("-", "")
         base_dir = f"https://www.sec.gov/Archives/edgar/data/{cik}/{acc_no_clean}"
 

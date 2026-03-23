@@ -66,7 +66,39 @@ class SECBot(commands.Bot):
                     if channel_id:
                         channel = self.get_channel(int(channel_id))
                         if channel:
-                            await channel.send(content=M["MENTION_NEW_FILING"], embed=embed)
+                            msg = await channel.send(content=M["MENTION_NEW_FILING"], embed=embed)
+                            
+                            thread_name = M["THREAD_TITLE"].format(
+                                form_type=filing.get('form_type', 'Unknown'),
+                                date=filing.get('filing_date', M["EMBED_VALUE_NA"])
+                            )
+                            thread = await msg.create_thread(name=thread_name, auto_archive_duration=1440)
+                            loading_msg = await thread.send(M["THREAD_SUMMARY_LOADING"])
+                            
+                            try:
+                                import sec.sec_save as sec_save
+                                import core.gemini_service as gemini_service
+                                
+                                acc_no = filing.get("accession_no", "")
+                                form_type = filing.get("form_type", "")
+                                
+                                text = await loop.run_in_executor(None, sec_save.get_filing_text, acc_no)
+                                result_str = await loop.run_in_executor(None, gemini_service.summarize_filing, ticker, form_type, text)
+                                
+                                import json
+                                try:
+                                    result_json = json.loads(result_str)
+                                    new_thread_name = result_json.get("thread_title", thread_name)
+                                    if len(new_thread_name) > 100:
+                                        new_thread_name = new_thread_name[:97] + "..."
+                                    await thread.edit(name=new_thread_name)
+                                    summary_content = result_json.get("summary", "내용을 불러올 수 없습니다.")
+                                except json.JSONDecodeError:
+                                    summary_content = result_str # JSON 파싱 실패 시 원본 문자열 출력
+                                
+                                await loading_msg.edit(content=summary_content)
+                            except Exception as e:
+                                await loading_msg.edit(content=M.get("THREAD_SUMMARY_ERROR", f"Error: {e}"))
             except Exception as e:
                 print(M["LOG_TASK_ERR_CHECK"].format(ticker=ticker, err=e))
 
@@ -85,13 +117,102 @@ async def on_message(message: discord.Message):
     if message.author.bot:
         return
 
-    # 관리자 채팅은 지우지 않음
-    if message.author.guild_permissions.administrator:
+    # 쓰레드에서 온 메시지인지 확인
+    if isinstance(message.channel, discord.Thread) and message.channel.category and message.channel.category.name == M["CATEGORY_NAME"]:
+        import asyncio
+        import re
+        import json
+        import datetime
+        import sec.sec_save as sec_save
+        import core.gemini_service as gemini_service
+        import core.warning_service as warning_service
+
+        loading_msg = await message.channel.send(M.get("THREAD_QA_LOADING", "⏳ 답변을 생성 중입니다..."))
+        
+        try:
+            starter_msg = await message.channel.parent.fetch_message(message.channel.id)
+            ticker = message.channel.parent.name.upper()
+            
+            embed = starter_msg.embeds[0] if starter_msg.embeds else None
+            if not embed:
+                await loading_msg.edit(content=M["THREAD_QA_FETCH_ERR"])
+                return
+                
+            m = re.search(r'\((.*?)\)$', embed.title)
+            form_type = m.group(1) if m else "Unknown"
+            
+            accession_no = ""
+            for field in embed.fields:
+                if field.name == M["EMBED_FIELD_ACC_NO"]:
+                    accession_no = field.value
+                    break
+                    
+            text = await asyncio.get_event_loop().run_in_executor(None, sec_save.get_filing_text, accession_no)
+            
+            history = []
+            async for msg in message.channel.history(limit=50, oldest_first=True):
+                if msg.id == starter_msg.id or msg.id == loading_msg.id:
+                    continue
+                role = "model" if msg.author.bot else "user"
+                if not msg.content: continue
+                history.append({"role": role, "parts": msg.content})
+                
+            answer_str = await asyncio.get_event_loop().run_in_executor(
+                None, 
+                gemini_service.answer_question, 
+                ticker, form_type, text, history, message.content
+            )
+            
+            try:
+                answer_json = json.loads(answer_str)
+                is_related = answer_json.get("is_related", True)
+                answer_content = answer_json.get("answer", M["THREAD_QA_ANSWER_ERR"])
+                
+                if not is_related:
+                    warning_count = await asyncio.get_event_loop().run_in_executor(
+                        None, 
+                        warning_service.add_warning, 
+                        message.channel.id, message.author.id
+                    )
+                    
+                    if warning_count >= 3:
+                        try:
+                            timeout_reason = f"공시 및 {ticker} 주식과 무관한 질문 3회 누적"
+                            await message.author.timeout(datetime.timedelta(minutes=5), reason=timeout_reason)
+                            
+                            # DB에 타임아웃 이력 기록
+                            await asyncio.get_event_loop().run_in_executor(
+                                None, 
+                                warning_service.log_timeout, 
+                                message.author.id, message.guild.id, timeout_reason, 5
+                            )
+                            
+                            await loading_msg.edit(content=M["THREAD_QA_WARN_TIMEOUT"].format(mention=message.author.mention, ticker=ticker))
+                        except discord.Forbidden:
+                            await loading_msg.edit(content=M["THREAD_QA_WARN_NO_PERM"].format(mention=message.author.mention, ticker=ticker))
+                        # 타임아웃 적용 후 초기화
+                        await asyncio.get_event_loop().run_in_executor(
+                            None, 
+                            warning_service.reset_warnings, 
+                            message.channel.id, message.author.id
+                        )
+                    else:
+                        await loading_msg.edit(content=M["THREAD_QA_WARN"].format(mention=message.author.mention, ticker=ticker, warning_count=warning_count, answer_content=answer_content))
+                else:
+                    await loading_msg.edit(content=answer_content)
+            except json.JSONDecodeError:
+                await loading_msg.edit(content=answer_str)
+        except Exception as e:
+            await loading_msg.edit(content=M["THREAD_QA_GENERAL_ERR"].format(err=e))
+        return
+
+    # 관리자 채팅은 지우지 않음 (채널이더라도)
+    if hasattr(message.author, 'guild_permissions') and message.author.guild_permissions.administrator:
         await bot.process_commands(message)
         return
 
     # 채널의 카테고리가 "알림"인지 확인 (티커 방들)
-    if message.channel.category and message.channel.category.name == M["CATEGORY_NAME"]:
+    if not isinstance(message.channel, discord.Thread) and message.channel.category and message.channel.category.name == M["CATEGORY_NAME"]:
         try:
             # 유저의 채팅 메시지 삭제
             await message.delete()
@@ -127,7 +248,7 @@ async def get_or_create_ticker_channel(guild: discord.Guild, ticker: str):
             send_messages=False,
             create_public_threads=False,
             create_private_threads=False,
-            send_messages_in_threads=False
+            send_messages_in_threads=True
         ),
         guild.me: discord.PermissionOverwrite(
             read_messages=True, 
@@ -168,7 +289,7 @@ async def subscribe_cmd(interaction: discord.Interaction, ticker: str):
             send_messages=False,
             create_public_threads=False,
             create_private_threads=False,
-            send_messages_in_threads=False
+            send_messages_in_threads=True
         )
         
         await interaction.response.send_message(M["CMD_SUB_SUCCESS"].format(ticker=ticker, channel_mention=channel.mention), ephemeral=True)
@@ -213,29 +334,134 @@ async def list_cmd(interaction: discord.Interaction):
     else:
         await interaction.response.send_message(M["CMD_LIST_EMPTY"], ephemeral=True)
 
-@bot.tree.command(name="테스트공시", description="(관리자 전용) 특정 종목의 가짜 공시 알림을 테스트로 전송합니다.")
+@bot.tree.command(name="테스트공시", description="(관리자 전용) 특정 종목의 가장 최근 실제 공시를 가져와 테스트 알림 및 요약을 전송합니다.")
 @discord.app_commands.default_permissions(administrator=True)
 async def test_filing_cmd(interaction: discord.Interaction, ticker: str):
+    await interaction.response.defer(ephemeral=True)
     ticker = ticker.upper()
     channel_id = get_ticker_channel(ticker)
     
     if not channel_id:
-        await interaction.response.send_message(M["CMD_TEST_NO_ROOM"].format(ticker=ticker), ephemeral=True)
+        await interaction.followup.send(M["CMD_TEST_NO_ROOM"].format(ticker=ticker), ephemeral=True)
         return
         
     channel = interaction.guild.get_channel(int(channel_id))
     if not channel:
-        await interaction.response.send_message(M["CMD_TEST_NO_CHANNEL"].format(ticker=ticker), ephemeral=True)
+        await interaction.followup.send(M["CMD_TEST_NO_CHANNEL"].format(ticker=ticker), ephemeral=True)
         return
 
-    embed = discord.Embed(
-        title=M["CMD_TEST_EMBED_TITLE"].format(ticker=ticker),
-        url="https://www.sec.gov",
-        description=M["CMD_TEST_EMBED_DESC"].format(ticker=ticker),
-        color=discord.Color.red()
-    )
-    embed.add_field(name=M["EMBED_FIELD_DATE"], value="2026-03-23", inline=True)
-    embed.add_field(name=M["EMBED_FIELD_ACC_NO"], value="0001234567-89-012345", inline=True)
+    import asyncio
+    import sec.sec_fetch as fetch
+    import sec.sec_save as save
+    import core.gemini_service as gemini_service
     
-    await channel.send(content=M["CMD_TEST_MENTION"], embed=embed)
-    await interaction.response.send_message(M["CMD_TEST_SUCCESS"].format(ticker=ticker), ephemeral=True)
+    try:
+        submissions = await asyncio.get_event_loop().run_in_executor(None, fetch.get_sec_submissions, ticker)
+        recent = submissions.get("filings", {}).get("recent", {})
+        if not recent or not recent.get("accessionNumber"):
+            await interaction.followup.send(M["CMD_TEST_NO_RECENT"].format(ticker=ticker), ephemeral=True)
+            return
+            
+        accession_no = recent["accessionNumber"][0]
+        form_type = recent["form"][0]
+        filing_date = recent["filingDate"][0]
+        primary_doc = recent["primaryDocument"][0] if recent.get("primaryDocument") else ""
+        
+        cik = str(submissions.get("cik", "")).lstrip("0")
+        acc_no_clean = accession_no.replace("-", "")
+        base_dir = f"https://www.sec.gov/Archives/edgar/data/{cik}/{acc_no_clean}"
+        url = f"{base_dir}/{primary_doc}" if primary_doc else f"{base_dir}/{acc_no_clean}.txt"
+
+        embed = discord.Embed(
+            title=M["CMD_TEST_EMBED_TITLE"].format(ticker=ticker).replace("8-K", form_type),
+            url=url,
+            description=M["CMD_TEST_EMBED_DESC"].format(ticker=ticker).replace("8-K", form_type),
+            color=discord.Color.red()
+        )
+        embed.add_field(name=M["EMBED_FIELD_DATE"], value=filing_date, inline=True)
+        embed.add_field(name=M["EMBED_FIELD_ACC_NO"], value=accession_no, inline=True)
+        
+        msg = await channel.send(content=M["CMD_TEST_MENTION"], embed=embed)
+        
+        thread_name = M["THREAD_TITLE"].format(form_type=form_type, date=filing_date)
+        thread = await msg.create_thread(name=thread_name, auto_archive_duration=1440)
+        loading_msg = await thread.send(M["THREAD_SUMMARY_LOADING"])
+
+        # Fetch and save text
+        text = await asyncio.get_event_loop().run_in_executor(None, save.get_filing_text, accession_no)
+        if not text:
+            text = await asyncio.get_event_loop().run_in_executor(None, fetch.get_filing_detail, submissions, accession_no)
+            await asyncio.get_event_loop().run_in_executor(None, save.save_filing_text, accession_no, text)
+            
+        # Summarize
+        result_str = await asyncio.get_event_loop().run_in_executor(None, gemini_service.summarize_filing, ticker, form_type, text)
+        
+        import json
+        try:
+            result_json = json.loads(result_str)
+            new_thread_name = result_json.get("thread_title", thread_name)
+            if len(new_thread_name) > 100:
+                new_thread_name = new_thread_name[:97] + "..."
+            await thread.edit(name=new_thread_name)
+            summary_content = result_json.get("summary", "내용을 불러올 수 없습니다.")
+        except json.JSONDecodeError:
+            summary_content = result_str
+        
+        await loading_msg.edit(content=summary_content)
+        await interaction.followup.send(M["CMD_TEST_SUCCESS"].format(ticker=ticker), ephemeral=True)
+        
+    except Exception as e:
+        await interaction.followup.send(M["CMD_TEST_ERR"].format(err=e), ephemeral=True)
+
+@bot.tree.command(name="유저조회", description="(관리자 전용) 특정 유저의 경고 및 타임아웃 기록을 조회합니다.")
+@discord.app_commands.default_permissions(administrator=True)
+async def user_info_cmd(interaction: discord.Interaction, user: discord.Member):
+    await interaction.response.defer(ephemeral=True)
+    try:
+        import core.warning_service as warning_service
+        import asyncio
+        
+        # 1. 활성 경고 가져오기
+        warnings = await asyncio.get_event_loop().run_in_executor(
+            None, warning_service.get_user_warnings, user.id
+        )
+        
+        # 2. 타임아웃 로그 가져오기
+        timeout_logs = await asyncio.get_event_loop().run_in_executor(
+            None, warning_service.get_user_timeout_logs, user.id, interaction.guild.id
+        )
+        
+        embed = discord.Embed(
+            title=M["CMD_USER_INFO_TITLE"],
+            description=M["CMD_USER_INFO_DESC"].format(user_name=user.display_name),
+            color=discord.Color.orange()
+        )
+        embed.set_thumbnail(url=user.display_avatar.url if user.display_avatar else None)
+        
+        # 경고 내역 처리
+        total_warns = sum(w['warning_count'] for w in warnings)
+        warn_text = ""
+        if warnings:
+            for w in warnings:
+                date_str = w['updated_at'].strftime("%Y-%m-%d %H:%M")
+                warn_text += M["CMD_USER_INFO_WARN_ITEM"].format(thread_id=w['thread_id'], count=w['warning_count'], date=date_str) + "\n"
+        else:
+            warn_text = M["CMD_USER_INFO_WARN_EMPTY"]
+            
+        embed.add_field(name=M["CMD_USER_INFO_WARN_FIELD"].format(total_warns=total_warns), value=warn_text, inline=False)
+        
+        # 타임아웃 로그 처리
+        timeout_text = ""
+        if timeout_logs:
+            for t in timeout_logs:
+                date_str = t['created_at'].strftime("%Y-%m-%d %H:%M")
+                timeout_text += M["CMD_USER_INFO_TIMEOUT_ITEM"].format(date=date_str, reason=t['reason'], duration=t['duration_minutes']) + "\n"
+        else:
+            timeout_text = M["CMD_USER_INFO_TIMEOUT_EMPTY"]
+            
+        embed.add_field(name=M["CMD_USER_INFO_TIMEOUT_FIELD"], value=timeout_text, inline=False)
+        
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        
+    except Exception as e:
+        await interaction.followup.send(M["CMD_USER_INFO_ERR"].format(err=e), ephemeral=True)

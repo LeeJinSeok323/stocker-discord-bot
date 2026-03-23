@@ -1,0 +1,19 @@
+{
+    "sqltools.connections": [
+        {
+            "mysqlOptions": {
+                "authProtocol": "default",
+                "enableSsl": "Disabled"
+            },
+            "ssh": "Disabled",
+            "previewLimit": 50,
+            "server": "192.168.31.75",
+            "port": 3307,
+            "driver": "MySQL",
+            "name": "stocker",
+            "database": "stocker",
+            "username": "jinseoki",
+            "askForPassword": true
+        }
+    ]
+}

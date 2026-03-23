@@ -33,7 +33,30 @@ def save_filing_meta(meta: dict) -> int:
     finally:
         conn.close()
 
+import os
 
+def save_filing_text(accession_no: str, content: str) -> str:
+    """
+    공시 본문을 로컬 텍스트 파일로 저장합니다.
+    """
+    storage_dir = os.path.join("storage", "filings")
+    os.makedirs(storage_dir, exist_ok=True)
+    
+    file_path = os.path.join(storage_dir, f"{accession_no}.txt")
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write(content)
+    
+    return file_path
+
+def get_filing_text(accession_no: str) -> str:
+    """
+    로컬에 저장된 공시 본문을 읽어옵니다.
+    """
+    file_path = os.path.join("storage", "filings", f"{accession_no}.txt")
+    if os.path.exists(file_path):
+        with open(file_path, "r", encoding="utf-8") as f:
+            return f.read()
+    return ""
 
 def save_filing_content(filing_id: int, content_type: str, content: str) -> int:
     conn = get_db_connection()
