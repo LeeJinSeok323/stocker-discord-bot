@@ -177,6 +177,7 @@ async def on_message(message: discord.Message):
                         message.channel.id, message.author.id
                     )
                     
+                    warn_msg = ""
                     if warning_count >= 3:
                         try:
                             timeout_reason = f"공시 및 {ticker} 주식과 무관한 질문 3회 누적"
@@ -188,10 +189,10 @@ async def on_message(message: discord.Message):
                                 warning_service.log_timeout, 
                                 message.author.id, message.guild.id, timeout_reason, 5
                             )
-                            
-                            await loading_msg.edit(content=M["THREAD_QA_WARN_TIMEOUT"].format(mention=message.author.mention, ticker=ticker))
+                            warn_msg = M["THREAD_QA_WARN_TIMEOUT"].format(mention=message.author.name, ticker=ticker)
                         except discord.Forbidden:
-                            await loading_msg.edit(content=M["THREAD_QA_WARN_NO_PERM"].format(mention=message.author.mention, ticker=ticker))
+                            warn_msg = M["THREAD_QA_WARN_NO_PERM"].format(mention=message.author.name, ticker=ticker)
+                        
                         # 타임아웃 적용 후 초기화
                         await asyncio.get_event_loop().run_in_executor(
                             None, 
@@ -199,7 +200,25 @@ async def on_message(message: discord.Message):
                             message.channel.id, message.author.id
                         )
                     else:
-                        await loading_msg.edit(content=M["THREAD_QA_WARN"].format(mention=message.author.mention, ticker=ticker, warning_count=warning_count, answer_content=answer_content))
+                        warn_msg = M["THREAD_QA_WARN"].format(mention=message.author.name, ticker=ticker, warning_count=warning_count, answer_content=answer_content)
+                    
+                    # 유저에게만 보이도록 DM으로 경고 전송
+                    try:
+                        await message.author.send(warn_msg)
+                    except discord.Forbidden:
+                        pass # 유저가 DM을 막아둔 경우 무시
+                    
+                    # 봇의 로딩 메시지는 삭제
+                    try:
+                        await loading_msg.delete()
+                    except discord.NotFound:
+                        pass
+                        
+                    # 5초 뒤에 유저의 엉뚱한 질문 메시지 삭제
+                    try:
+                        await message.delete(delay=5.0)
+                    except discord.Forbidden:
+                        pass
                 else:
                     await loading_msg.edit(content=answer_content)
             except json.JSONDecodeError:
