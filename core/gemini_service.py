@@ -1,11 +1,30 @@
 import os
 import google.generativeai as genai
+from config.db_config import get_db_connection
 
 # 환경변수에서 API 키를 읽어옵니다. 
 genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
 
 # 요약 모델 
 summary_model = genai.GenerativeModel("gemini-1.5-flash")
+
+def log_gemini_api(action_type: str, ticker: str, form_type: str, prompt: str, response: str = None, error_message: str = None):
+    """
+    Gemini API 호출 로그 및 에러를 DB에 저장합니다.
+    """
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cursor:
+            sql = """
+            INSERT INTO gemini_api_log (action_type, ticker, form_type, prompt, response, error_message)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """
+            cursor.execute(sql, (action_type, ticker, form_type, prompt, response, error_message))
+            conn.commit()
+    except Exception as e:
+        print(f"[DB] Error logging Gemini API: {e}")
+    finally:
+        conn.close()
 
 def summarize_filing(ticker: str, form_type: str, content: str) -> str:
     """
@@ -38,6 +57,10 @@ def summarize_filing(ticker: str, form_type: str, content: str) -> str:
     try:
         response = summary_model.generate_content(prompt)
         text = response.text.strip()
+        
+        # Log success
+        log_gemini_api("summarize_filing", ticker, form_type, prompt, text, None)
+        
         if text.startswith("```json"):
             text = text[7:]
         elif text.startswith("```"):
@@ -46,7 +69,9 @@ def summarize_filing(ticker: str, form_type: str, content: str) -> str:
             text = text[:-3]
         return text.strip()
     except Exception as e:
-        print(f"[Gemini] Error summarizing filing: {e}")
+        error_msg = str(e)
+        print(f"[Gemini] Error summarizing filing: {error_msg}")
+        log_gemini_api("summarize_filing", ticker, form_type, prompt, None, error_msg)
         return '{{"thread_title": "요약 생성 오류", "summary": "요약 생성 중 오류가 발생했습니다."}}'
 
 def answer_question(ticker: str, form_type: str, content: str, history: list, question: str) -> str:
@@ -85,6 +110,10 @@ def answer_question(ticker: str, form_type: str, content: str, history: list, qu
     try:
         response = chat.send_message(prompt)
         text = response.text.strip()
+        
+        # Log success
+        log_gemini_api("answer_question", ticker, form_type, prompt, text, None)
+        
         if text.startswith("```json"):
             text = text[7:]
         elif text.startswith("```"):
@@ -93,5 +122,7 @@ def answer_question(ticker: str, form_type: str, content: str, history: list, qu
             text = text[:-3]
         return text.strip()
     except Exception as e:
-        print(f"[Gemini] Error answering question: {e}")
+        error_msg = str(e)
+        print(f"[Gemini] Error answering question: {error_msg}")
+        log_gemini_api("answer_question", ticker, form_type, prompt, None, error_msg)
         return '{{"is_related": true, "answer": "답변 생성 중 오류가 발생했습니다."}}'
