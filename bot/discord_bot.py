@@ -93,6 +93,8 @@ class SECBot(commands.Bot):
                                         new_thread_name = new_thread_name[:97] + "..."
                                     await thread.edit(name=new_thread_name)
                                     summary_content = result_json.get("summary", "내용을 불러올 수 없습니다.")
+                                    # 알림 메시지 내용을 AI가 생성한 제목으로 변경
+                                    await msg.edit(content=f"🔔 **{new_thread_name}**")
                                 except json.JSONDecodeError:
                                     summary_content = result_str # JSON 파싱 실패 시 원본 문자열 출력
                                 
@@ -404,6 +406,8 @@ async def test_filing_cmd(interaction: discord.Interaction, ticker: str):
                 new_thread_name = new_thread_name[:97] + "..."
             await thread.edit(name=new_thread_name)
             summary_content = result_json.get("summary", "내용을 불러올 수 없습니다.")
+            # 알림 메시지 내용을 AI가 생성한 제목으로 변경
+            await msg.edit(content=f"🔔 **{new_thread_name}**")
         except json.JSONDecodeError:
             summary_content = result_str
         
