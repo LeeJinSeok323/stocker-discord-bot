@@ -51,6 +51,13 @@ def batch_fetch_stocks(limit=50):
                         print(f"[batch] Rate limited on {ticker}. Sleeping for 15 minutes.", flush=True)
                         time.sleep(900)
                         continue
+                    elif "delisted" in error_msgs or "no timezone found" in error_msgs or "no price data" in error_msgs or "yftzmissingerror" in error_msgs:
+                        print(f"[batch] Delisted detected for {ticker}.", flush=True)
+
+                        with conn.cursor() as cursor:
+                            cursor.execute("UPDATE stocks SET status = 'DELISTED', delisted_at = NOW() WHERE ticker = %s", (ticker,))
+                            conn.commit()
+
                     else:
                         print(f"[batch] Download warning/error on {ticker}: {yf.shared._ERRORS}", flush=True)
                         time.sleep(60)
