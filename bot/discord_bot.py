@@ -1,6 +1,17 @@
 import os
 import discord
 from discord.ext import commands, tasks
+import asyncio
+import re
+import json
+import datetime
+
+import sec.sec_save as sec_save
+import core.gemini_service as gemini_service
+import core.warning_service as warning_service
+import sec.sec_fetch as fetch
+import sec.sec_save as save
+from config.db_config import get_db_connection
 
 from config.subscriptions import (
     subscribe, unsubscribe, get_subscriptions, 
@@ -40,7 +51,6 @@ class SECBot(commands.Bot):
         if not active_tickers:
             return
 
-        import asyncio
         # 병렬 처리를 위해 각 티커별 작업을 생성
         async def process_ticker(ticker):
             try:
@@ -90,16 +100,12 @@ class SECBot(commands.Bot):
                         loading_msg = await thread.send(M["THREAD_SUMMARY_LOADING"])
                         
                         try:
-                            import sec.sec_save as sec_save
-                            import core.gemini_service as gemini_service
-                            
                             acc_no = filing.get("accession_no", "")
                             form_type = filing.get("form_type", "")
                             
                             text = await loop.run_in_executor(None, sec_save.get_filing_text, acc_no)
                             result_str = await loop.run_in_executor(None, gemini_service.summarize_filing, ticker, form_type, text)
                             
-                            import json
                             try:
                                 result_json = json.loads(result_str)
                                 new_thread_name = result_json.get("thread_title", thread_name)
@@ -135,14 +141,6 @@ async def on_message(message: discord.Message):
 
     # 쓰레드에서 온 메시지인지 확인
     if isinstance(message.channel, discord.Thread) and message.channel.category and message.channel.category.name == M["CATEGORY_NAME"]:
-        import asyncio
-        import re
-        import json
-        import datetime
-        import sec.sec_save as sec_save
-        import core.gemini_service as gemini_service
-        import core.warning_service as warning_service
-
         loading_msg = await message.channel.send(M.get("THREAD_QA_LOADING", "⏳ 답변을 생성 중입니다..."))
         
         try:
@@ -306,7 +304,6 @@ async def subscribe_cmd(interaction: discord.Interaction, ticker: str):
     ticker = ticker.upper().strip()
     
     # 티커 유효성 검사 (stocks 테이블에 존재하는지 확인)
-    from config.db_config import get_db_connection
     conn = get_db_connection()
     try:
         with conn.cursor() as cursor:
@@ -390,11 +387,6 @@ async def test_filing_cmd(interaction: discord.Interaction, ticker: str):
     if not channel:
         await interaction.followup.send(M["CMD_TEST_NO_CHANNEL"].format(ticker=ticker), ephemeral=True)
         return
-
-    import asyncio
-    import sec.sec_fetch as fetch
-    import sec.sec_save as save
-    import core.gemini_service as gemini_service
     
     try:
         submissions = await asyncio.get_event_loop().run_in_executor(None, fetch.get_sec_submissions, ticker)
@@ -437,7 +429,6 @@ async def test_filing_cmd(interaction: discord.Interaction, ticker: str):
         # Summarize
         result_str = await asyncio.get_event_loop().run_in_executor(None, gemini_service.summarize_filing, ticker, form_type, text)
         
-        import json
         try:
             result_json = json.loads(result_str)
             new_thread_name = result_json.get("thread_title", thread_name)
@@ -461,9 +452,6 @@ async def test_filing_cmd(interaction: discord.Interaction, ticker: str):
 async def user_info_cmd(interaction: discord.Interaction, user: discord.Member):
     await interaction.response.defer(ephemeral=True)
     try:
-        import core.warning_service as warning_service
-        import asyncio
-        
         # 1. 활성 경고 가져오기
         warnings = await asyncio.get_event_loop().run_in_executor(
             None, warning_service.get_user_warnings, user.id

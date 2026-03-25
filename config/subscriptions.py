@@ -1,6 +1,6 @@
 import pymysql
-from config.db_config import get_db_connection
 import sec.sec_fetch as fetch
+from config.db_config import get_db_connection
 
 def subscribe(user_id: str, ticker: str):
     ticker = ticker.upper()
@@ -11,9 +11,7 @@ def subscribe(user_id: str, ticker: str):
             cursor.execute("SELECT 1 FROM sec_watchlist WHERE discord_user_id = %s AND ticker = %s AND enabled = 'Y'", (user_id, ticker))
             if cursor.fetchone():
                 return False
-            
-            # get cik
-            from config.db_config import get_db_connection
+
             cik_str = None
             conn_cik = get_db_connection()
             try:
