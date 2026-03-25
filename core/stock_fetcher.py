@@ -1,10 +1,10 @@
 import time
 import random
-import requests
+from curl_cffi import requests
 import yfinance as yf
 from config.db_config import get_db_connection
 
-def batch_fetch_stocks(limit=1000):
+def batch_fetch_stocks(limit=50):
     conn = get_db_connection()
     try:
         with conn.cursor() as cursor:
@@ -19,13 +19,10 @@ def batch_fetch_stocks(limit=1000):
             print("[batch] All stocks fetched. Nothing to do.", flush=True)
             return
 
-        session = requests.Session()
-        session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
-        })
+        # curl_cffi를 사용하여 브라우저 지문을 모방한 세션 생성
+        session = requests.Session(impersonate="chrome120")
 
         count = 0
-
         for ticker in tickers:
             try:
                 print(f"[batch] Fetching {ticker}...", flush=True)
@@ -42,8 +39,6 @@ def batch_fetch_stocks(limit=1000):
 
                 if not data.empty:
                     data = data.dropna(subset=['Open', 'High', 'Low', 'Close', 'Volume'])
-
-                if not data.empty:
                     val_list = []
                     for date, row in data.iterrows():
                         val_list.append((
@@ -76,13 +71,12 @@ def batch_fetch_stocks(limit=1000):
                     print(f"[batch] {ticker} has no data.", flush=True)
 
                 count += 1
-
                 if count % 50 == 0:
                     macro_sleep = random.uniform(120.0, 300.0)
                     print(f"[batch] Coffee break! Sleeping for {macro_sleep:.2f} seconds...", flush=True)
                     time.sleep(macro_sleep)
                 else:
-                    time.sleep(random.uniform(3.0, 7.0))
+                    time.sleep(random.uniform(5.0, 15.0))
 
             except Exception as e:
                 conn.rollback()
