@@ -11,3 +11,5 @@ typing_extensions==4.15.0
 urllib3==2.6.3
 discord.py==2.3.2
 google-generativeai==0.8.4
+yfinance==0.2.54
+schedule==1.2.2
