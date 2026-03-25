@@ -1,12 +1,12 @@
 import time
 import random
+import requests
 import yfinance as yf
 from config.db_config import get_db_connection
 
-def batch_fetch_stocks(limit=50):
+def batch_fetch_stocks(limit=1000):
     conn = get_db_connection()
     try:
-        # 수집 안 된 종목 50개만 조회
         with conn.cursor() as cursor:
             cursor.execute("""
                 SELECT ticker FROM stocks 
@@ -14,41 +14,84 @@ def batch_fetch_stocks(limit=50):
                 ORDER BY ticker ASC LIMIT %s
             """, (limit,))
             tickers = [row['ticker'] for row in cursor.fetchall()]
-        
+
         if not tickers:
             print("[batch] All stocks fetched. Nothing to do.", flush=True)
             return
 
+        session = requests.Session()
+        session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+        })
+
+        count = 0
+
         for ticker in tickers:
             try:
                 print(f"[batch] Fetching {ticker}...", flush=True)
-                stock = yf.Ticker(ticker)
-                hist = stock.history(period="max")
-                
-                if not hist.empty:
+
+                data = yf.download(
+                    tickers=ticker,
+                    period="max",
+                    interval="1d",
+                    auto_adjust=False,
+                    prepost=False,
+                    threads=False,
+                    session=session
+                )
+
+                if not data.empty:
+                    data = data.dropna(subset=['Open', 'High', 'Low', 'Close', 'Volume'])
+
+                if not data.empty:
+                    val_list = []
+                    for date, row in data.iterrows():
+                        val_list.append((
+                            ticker,
+                            date.strftime('%Y-%m-%d'),
+                            float(row['Open']),
+                            float(row['High']),
+                            float(row['Low']),
+                            float(row['Close']),
+                            int(row['Volume'])
+                        ))
+
                     with conn.cursor() as cursor:
-                        for date, row in hist.iterrows():
-                            cursor.execute("""
-                                INSERT INTO stock_price_history (ticker, date, open, high, low, close, volume)
-                                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                                ON DUPLICATE KEY UPDATE 
-                                    open = VALUES(open), high = VALUES(high), 
-                                    low = VALUES(low), close = VALUES(close), 
-                                    volume = VALUES(volume)
-                            """, (ticker, date.strftime('%Y-%m-%d'), row['Open'], row['High'], row['Low'], row['Close'], int(row['Volume'])))
-                        
+                        sql = """
+                            INSERT INTO stock_price_history (ticker, date, open, high, low, close, volume)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s)
+                            ON DUPLICATE KEY UPDATE 
+                                open = VALUES(open), high = VALUES(high), 
+                                low = VALUES(low), close = VALUES(close), 
+                                volume = VALUES(volume)
+                        """
+                        cursor.executemany(sql, val_list)
                         cursor.execute("UPDATE stocks SET last_fetched_at = NOW() WHERE ticker = %s", (ticker,))
                         conn.commit()
-                        print(f"[batch] {ticker} success.", flush=True)
+                    print(f"[batch] {ticker} success. Inserted {len(val_list)} rows.", flush=True)
                 else:
-                    # 데이터가 없는 경우도 완료 처리
                     with conn.cursor() as cursor:
                         cursor.execute("UPDATE stocks SET last_fetched_at = NOW() WHERE ticker = %s", (ticker,))
                         conn.commit()
-                
-                time.sleep(random.uniform(5, 10))
+                    print(f"[batch] {ticker} has no data.", flush=True)
+
+                count += 1
+
+                if count % 50 == 0:
+                    macro_sleep = random.uniform(120.0, 300.0)
+                    print(f"[batch] Coffee break! Sleeping for {macro_sleep:.2f} seconds...", flush=True)
+                    time.sleep(macro_sleep)
+                else:
+                    time.sleep(random.uniform(3.0, 7.0))
+
             except Exception as e:
-                print(f"[batch] Error on {ticker}: {e}", flush=True)
-                time.sleep(60) 
+                conn.rollback()
+                error_msg = str(e).lower()
+                if "429" in error_msg or "too many requests" in error_msg:
+                    print(f"[batch] Rate limited on {ticker}. Sleeping for 15 minutes.", flush=True)
+                    time.sleep(900)
+                else:
+                    print(f"[batch] Error on {ticker}: {e}", flush=True)
+                    time.sleep(60)
     finally:
         conn.close()
