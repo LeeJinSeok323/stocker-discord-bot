@@ -15,5 +15,6 @@ def run_scheduler():
         time.sleep(60)
 
 def start_stock_update_service():
+    print("[scheduler] Starting background stock update service...", flush=True)
     thread = threading.Thread(target=run_scheduler, daemon=True)
     thread.start()

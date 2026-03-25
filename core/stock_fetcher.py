@@ -16,12 +16,12 @@ def batch_fetch_stocks(limit=50):
             tickers = [row['ticker'] for row in cursor.fetchall()]
         
         if not tickers:
-            print("[batch] All stocks fetched. Nothing to do.")
+            print("[batch] All stocks fetched. Nothing to do.", flush=True)
             return
 
         for ticker in tickers:
             try:
-                print(f"[batch] Fetching {ticker}...")
+                print(f"[batch] Fetching {ticker}...", flush=True)
                 stock = yf.Ticker(ticker)
                 hist = stock.history(period="max")
                 
@@ -39,7 +39,7 @@ def batch_fetch_stocks(limit=50):
                         
                         cursor.execute("UPDATE stocks SET last_fetched_at = NOW() WHERE ticker = %s", (ticker,))
                         conn.commit()
-                        print(f"[batch] {ticker} success.")
+                        print(f"[batch] {ticker} success.", flush=True)
                 else:
                     # 데이터가 없는 경우도 완료 처리
                     with conn.cursor() as cursor:
@@ -48,7 +48,7 @@ def batch_fetch_stocks(limit=50):
                 
                 time.sleep(random.uniform(5, 10))
             except Exception as e:
-                print(f"[batch] Error on {ticker}: {e}")
+                print(f"[batch] Error on {ticker}: {e}", flush=True)
                 time.sleep(60) 
     finally:
         conn.close()
