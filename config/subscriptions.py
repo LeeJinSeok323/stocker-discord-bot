@@ -13,14 +13,17 @@ def subscribe(user_id: str, ticker: str):
                 return False
             
             # get cik
-            import json
-            # If we need CIK, we can find it. 
-            # In sec_fetch, it is loaded from store/company_tickers.json
+            from config.db_config import get_db_connection
             cik_str = None
-            if hasattr(fetch, 'ticker_to_cik'):
-                cik = fetch.ticker_to_cik.get(ticker)
-                if cik:
-                    cik_str = str(cik).zfill(10)
+            conn_cik = get_db_connection()
+            try:
+                with conn_cik.cursor() as cursor_cik:
+                    cursor_cik.execute("SELECT cik FROM stocks WHERE ticker = %s", (ticker,))
+                    row = cursor_cik.fetchone()
+                    if row:
+                        cik_str = str(row['cik']).zfill(10)
+            finally:
+                conn_cik.close()
             
             # insert or update
             # Using REPLACE or ON DUPLICATE KEY UPDATE.
@@ -85,11 +88,11 @@ def get_all_subscriptions():
     finally:
         conn.close()
 
-def get_ticker_channel(ticker: str):
+def get_ticker_channel(ticker: str, guild_id: str):
     conn = get_db_connection()
     try:
         with conn.cursor() as cursor:
-            cursor.execute("SELECT channel_id FROM sec_ticker_channel WHERE ticker = %s", (ticker.upper(),))
+            cursor.execute("SELECT channel_id FROM sec_ticker_channel WHERE ticker = %s AND guild_id = %s", (ticker.upper(), str(guild_id)))
             row = cursor.fetchone()
             if row:
                 return str(row['channel_id'])
@@ -100,16 +103,16 @@ def get_ticker_channel(ticker: str):
     finally:
         conn.close()
 
-def set_ticker_channel(ticker: str, channel_id: str):
+def set_ticker_channel(ticker: str, guild_id: str, channel_id: str):
     ticker = ticker.upper()
     conn = get_db_connection()
     try:
         with conn.cursor() as cursor:
             cursor.execute("""
-                INSERT INTO sec_ticker_channel (ticker, channel_id)
-                VALUES (%s, %s)
+                INSERT INTO sec_ticker_channel (ticker, guild_id, channel_id)
+                VALUES (%s, %s, %s)
                 ON DUPLICATE KEY UPDATE channel_id = VALUES(channel_id)
-            """, (ticker, str(channel_id)))
+            """, (ticker, str(guild_id), str(channel_id)))
             conn.commit()
     except Exception as e:
         print(f"[subscriptions] ERROR in set_ticker_channel: {e}")

@@ -1,29 +1,27 @@
 """
 SEC 공시 데이터를 가져옴
 """
-import json
 import requests
 import os
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup
 import re
+from config.db_config import get_db_connection
 
 load_dotenv()
 SEC_USER_AGENT = os.getenv("SEC_USER_AGENT")
 
-with open("store/company_tickers.json", "r", encoding="utf-8") as f:
-    data = json.load(f)
-
-
-ticker_to_cik = {
-    item["ticker"]: int(item["cik_str"])
-    for item in data.values()
-}
-
 def get_cik10(ticker: str) -> str:
-    cik = ticker_to_cik[ticker.upper().strip()]  # 없으면 KeyError
-    return str(cik).zfill(10)
-
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT cik FROM stocks WHERE ticker = %s", (ticker.upper().strip(),))
+            row = cursor.fetchone()
+            if not row:
+                raise KeyError(f"Ticker {ticker} not found in database.")
+            return str(row['cik']).zfill(10)
+    finally:
+        conn.close()
 
 def get_sec_submissions(ticker: str) -> dict:
     cik10 = get_cik10(ticker)
@@ -34,6 +32,8 @@ def get_sec_submissions(ticker: str) -> dict:
     res = requests.get(url, headers=headers)
     res.raise_for_status()
     return res.json()
+
+# (get_filing_detail remains the same)
 
 def get_filing_detail(submissions: dict, accession_no: str) -> str:
     """

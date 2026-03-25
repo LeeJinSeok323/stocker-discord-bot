@@ -62,45 +62,59 @@ class SECBot(commands.Bot):
                     if filing.get("accepted_at"):
                         embed.add_field(name=M["EMBED_FIELD_ACCEPTED"], value=filing.get("accepted_at", M["EMBED_VALUE_NA"]), inline=False)
                     
-                    channel_id = get_ticker_channel(ticker)
-                    if channel_id:
-                        channel = self.get_channel(int(channel_id))
-                        if channel:
-                            msg = await channel.send(content=M["MENTION_NEW_FILING"], embed=embed)
+                    # [MODIFIED] 모든 채널에 알림 전송
+                    conn_subs = get_db_connection()
+                    try:
+                        with conn_subs.cursor() as cursor:
+                            cursor.execute("SELECT guild_id, channel_id FROM sec_ticker_channel WHERE ticker = %s", (ticker.upper(),))
+                            target_channels = cursor.fetchall()
+                    finally:
+                        conn_subs.close()
+
+                    for ch in target_channels:
+                        guild_id = int(ch['guild_id'])
+                        channel_id = int(ch['channel_id'])
+                        
+                        guild = self.get_guild(guild_id)
+                        if not guild: continue
+                        channel = guild.get_channel(channel_id)
+                        if not channel: continue
+                        
+                        msg = await channel.send(content=M["MENTION_NEW_FILING"], embed=embed)
                             
-                            thread_name = M["THREAD_TITLE"].format(
-                                form_type=filing.get('form_type', 'Unknown'),
-                                date=filing.get('filing_date', M["EMBED_VALUE_NA"])
-                            )
-                            thread = await msg.create_thread(name=thread_name, auto_archive_duration=1440)
-                            loading_msg = await thread.send(M["THREAD_SUMMARY_LOADING"])
+                        thread_name = M["THREAD_TITLE"].format(
+                            form_type=filing.get('form_type', 'Unknown'),
+                            date=filing.get('filing_date', M["EMBED_VALUE_NA"])
+                        )
+                        thread = await msg.create_thread(name=thread_name, auto_archive_duration=1440)
+                        loading_msg = await thread.send(M["THREAD_SUMMARY_LOADING"])
+                        
+                        try:
+                            import sec.sec_save as sec_save
+                            import core.gemini_service as gemini_service
                             
+                            acc_no = filing.get("accession_no", "")
+                            form_type = filing.get("form_type", "")
+                            
+                            text = await loop.run_in_executor(None, sec_save.get_filing_text, acc_no)
+                            result_str = await loop.run_in_executor(None, gemini_service.summarize_filing, ticker, form_type, text)
+                            
+                            import json
                             try:
-                                import sec.sec_save as sec_save
-                                import core.gemini_service as gemini_service
-                                
-                                acc_no = filing.get("accession_no", "")
-                                form_type = filing.get("form_type", "")
-                                
-                                text = await loop.run_in_executor(None, sec_save.get_filing_text, acc_no)
-                                result_str = await loop.run_in_executor(None, gemini_service.summarize_filing, ticker, form_type, text)
-                                
-                                import json
-                                try:
-                                    result_json = json.loads(result_str)
-                                    new_thread_name = result_json.get("thread_title", thread_name)
-                                    if len(new_thread_name) > 100:
-                                        new_thread_name = new_thread_name[:97] + "..."
-                                    await thread.edit(name=new_thread_name)
-                                    summary_content = result_json.get("summary", "내용을 불러올 수 없습니다.")
-                                    # 알림 메시지 내용을 AI가 생성한 제목으로 변경
-                                    await msg.edit(content=f"🔔 **{new_thread_name}**")
-                                except json.JSONDecodeError:
-                                    summary_content = result_str # JSON 파싱 실패 시 원본 문자열 출력
-                                
-                                await loading_msg.edit(content=summary_content)
-                            except Exception as e:
-                                await loading_msg.edit(content=M.get("THREAD_SUMMARY_ERROR", f"Error: {e}"))
+                                result_json = json.loads(result_str)
+                                new_thread_name = result_json.get("thread_title", thread_name)
+                                if len(new_thread_name) > 100:
+                                    new_thread_name = new_thread_name[:97] + "..."
+                                await thread.edit(name=new_thread_name)
+                                summary_content = result_json.get("summary", "내용을 불러올 수 없습니다.")
+                                # 알림 메시지 내용을 AI가 생성한 제목으로 변경
+                                await msg.edit(content=f"🔔 **{new_thread_name}**")
+                            except json.JSONDecodeError:
+                                summary_content = result_str # JSON 파싱 실패 시 원본 문자열 출력
+                            
+                            await loading_msg.edit(content=summary_content)
+                        except Exception as e:
+                            await loading_msg.edit(content=M.get("THREAD_SUMMARY_ERROR", f"Error: {e}"))
             except Exception as e:
                 print(M["LOG_TASK_ERR_CHECK"].format(ticker=ticker, err=e))
 
@@ -249,7 +263,7 @@ async def on_message(message: discord.Message):
 
 async def get_or_create_ticker_channel(guild: discord.Guild, ticker: str):
     ticker = ticker.upper()
-    channel_id = get_ticker_channel(ticker)
+    channel_id = get_ticker_channel(ticker, str(guild.id))
     
     if channel_id:
         channel = guild.get_channel(int(channel_id))
@@ -284,18 +298,24 @@ async def get_or_create_ticker_channel(guild: discord.Guild, ticker: str):
     channel_name = ticker.lower()
     channel = await guild.create_text_channel(channel_name, category=category, overwrites=overwrites)
     
-    set_ticker_channel(ticker, str(channel.id))
+    set_ticker_channel(ticker, str(guild.id), str(channel.id))
     return channel
 
 @bot.tree.command(name="구독", description="특정 종목의 SEC 공시 알림을 구독합니다.")
 async def subscribe_cmd(interaction: discord.Interaction, ticker: str):
     ticker = ticker.upper().strip()
     
-    # 티커 유효성 검사 (sec_fetch에 로드된 목록에 있는지 확인)
-    import sec.sec_fetch as fetch
-    if ticker not in fetch.ticker_to_cik:
-        await interaction.response.send_message(M["CMD_ERR_INVALID_TICKER"].format(ticker=ticker), ephemeral=True)
-        return
+    # 티커 유효성 검사 (stocks 테이블에 존재하는지 확인)
+    from config.db_config import get_db_connection
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT 1 FROM stocks WHERE ticker = %s", (ticker,))
+            if not cursor.fetchone():
+                await interaction.response.send_message(M["CMD_ERR_INVALID_TICKER"].format(ticker=ticker), ephemeral=True)
+                return
+    finally:
+        conn.close()
 
     success = subscribe(str(interaction.user.id), ticker)
     
@@ -327,7 +347,7 @@ async def unsubscribe_cmd(interaction: discord.Interaction, ticker: str):
     success = unsubscribe(str(interaction.user.id), ticker)
     
     if success:
-        channel_id = get_ticker_channel(ticker)
+        channel_id = get_ticker_channel(ticker, str(interaction.guild.id))
         if channel_id:
             channel = interaction.guild.get_channel(int(channel_id))
             if channel:
@@ -344,7 +364,7 @@ async def list_cmd(interaction: discord.Interaction):
     if tickers:
         ticker_mentions = []
         for t in tickers:
-            ch_id = get_ticker_channel(t)
+            ch_id = get_ticker_channel(t, str(interaction.guild.id))
             if ch_id:
                 ticker_mentions.append(f"<#{ch_id}>")
             else:
@@ -360,7 +380,7 @@ async def list_cmd(interaction: discord.Interaction):
 async def test_filing_cmd(interaction: discord.Interaction, ticker: str):
     await interaction.response.defer(ephemeral=True)
     ticker = ticker.upper()
-    channel_id = get_ticker_channel(ticker)
+    channel_id = get_ticker_channel(ticker, str(interaction.guild.id))
     
     if not channel_id:
         await interaction.followup.send(M["CMD_TEST_NO_ROOM"].format(ticker=ticker), ephemeral=True)
