@@ -40,11 +40,31 @@
 
 ---
 
-## 🏗 시스템 아키텍처
+---
+
+## 🏗 시스템 아키텍처 및 데이터 전략
 - **Language:** Python 3.14+
-- **Database:** MySQL (PyMySQL)
-- **Library:** discord.py, requests, beautifulsoup4
+- **Database:** 
+  - **MySQL (봇 설정용):** 사용자 구독 정보 및 공시 메타데이터 관리
+  - **ClickHouse (주식 데이터 전용):** 대규모 시계열(일봉/분봉) 데이터 고속 처리
+- **Library:** discord.py, requests, beautifulsoup4, clickhouse-driver
 - **Scheduler:** tasks.loop (Asyncio)
+
+### 📊 ClickHouse 데이터 아키텍처 (주식 데이터)
+- **설계 배경:** Ubuntu Mini PC(16GB RAM) 환경에서의 리소스 최적화 및 열 지향(Columnar) DB 도입을 통한 쓰기/조회 병목 해소.
+- **데이터 관리 전략 (Tiering):**
+  - **Daily (일봉):** 영구 보관 (연도별 파티션) - 장기 추세 및 백테스팅.
+  - **Intraday (1분봉):** 최근 5일 유지 (TTL 자동 삭제) - 실시간 변동성 및 알림 처리.
+- **핵심 기술:** 
+  - `MergeTree` 엔진 및 희소 인덱스를 통한 RAM 효율화.
+  - 컨테이너 메모리 4GB 제한 및 ZSTD 압축으로 스토리지 사용량 90% 절감.
+
+### 4. ClickHouse 인프라 및 수집 파이프라인
+- [ ] Docker Compose 환경 구축: MySQL(봇 설정) + ClickHouse(데이터) 하이브리드 구성.
+- [ ] Batch Collector 개발: yfinance/전문 API 활용하여 8,000개 종목 데이터 수집.
+- [ ] MergeTree 설계 및 데이터 브릿지(Bulk Insert) 구현.
+- [ ] `stock_metrics` 활용한 스크리닝 알고리즘 및 `/태풍의눈` 구현.
+
 - **Project Structure:**
   - `bot/`: 디스코드 봇 로직 및 명령어
   - `config/`: DB 설정, 구독 관리, 메시지 템플릿
