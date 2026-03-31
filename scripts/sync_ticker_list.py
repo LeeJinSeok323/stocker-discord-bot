@@ -15,29 +15,25 @@ def update_stocks():
         data = res.json()
 
         rows = data['data']
-        new_tickers = []
+        active_tickers = []
         records = []
 
         exclude_exchanges = ["OTC", "CBOE", "UNKNOWN", ""]
 
         for row in rows:
-            ticker = str(row[2]).upper()
-            exchange = (row[3] or "UNKNOWN").upper()
+            ticker = str(row[2]).upper().strip()
+            exchange = (row[3] or "UNKNOWN").upper().strip()
 
             if exchange in exclude_exchanges:
                 continue
 
-            if any(ticker.endswith(s) for s in [".OB", ".PK", "-WT", "-UN", "-PR"]):
-                continue
-
             if len(ticker) > 4:
-                if any(ticker.endswith(s) for s in ["WW", "WS", "WT", "RW", "W", "R"]):
-                    continue
-
-            if any(c in ticker for c in ["^", "/", "$"]):
                 continue
 
-            new_tickers.append(ticker)
+            if not ticker.isalpha():
+                continue
+
+            active_tickers.append(ticker)
             records.append((ticker, str(row[0]), row[1], exchange))
 
         if not records:
@@ -50,28 +46,32 @@ def update_stocks():
                     INSERT INTO stocks (ticker, cik, company_name, exchange, status, delisted_at)
                     VALUES (%s, %s, %s, %s, 'ACTIVE', NULL)
                     ON DUPLICATE KEY UPDATE 
-                        cik = VALUES(cik), company_name = VALUES(company_name),
-                        exchange = VALUES(exchange), status = 'ACTIVE', delisted_at = NULL
+                        cik = VALUES(cik), 
+                        company_name = VALUES(company_name),
+                        exchange = VALUES(exchange), 
+                        status = 'ACTIVE', 
+                        delisted_at = NULL
                 """
                 cursor.executemany(sql_upsert, records)
 
-                format_strings = ','.join(['%s'] * len(new_tickers))
-                sql_delist = f"""
-                    UPDATE stocks 
-                    SET status = 'DELISTED', delisted_at = NOW() 
-                    WHERE status = 'ACTIVE' AND ticker NOT IN ({format_strings})
-                """
-                cursor.execute(sql_delist, tuple(new_tickers))
-                
+                if active_tickers:
+                    sql_delist = """
+                        UPDATE stocks 
+                        SET status = 'DELISTED', delisted_at = NOW() 
+                        WHERE status = 'ACTIVE' 
+                          AND ticker NOT IN %s
+                    """
+                    cursor.execute(sql_delist, (tuple(active_tickers),))
+
                 conn.commit()
-                print(f"[batch] Update complete. {len(records)} active stocks.", flush=True)
-                
+                print(f"[batch] Update complete. {len(records)} stocks are now ACTIVE.", flush=True)
+
         except Exception as e:
             conn.rollback()
             print(f"[batch] DB Error: {e}", flush=True)
         finally:
             conn.close()
-            
+
     except Exception as e:
         print(f"[batch] Fetching Error: {e}", flush=True)
 
