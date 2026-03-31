@@ -5,7 +5,7 @@ from curl_cffi import requests
 import yfinance as yf
 from config.db_config import get_db_connection
 
-def batch_fetch_stocks(limit=50):
+def init_stock_data(limit=50):
     conn = get_db_connection()
     try:
         with conn.cursor() as cursor:

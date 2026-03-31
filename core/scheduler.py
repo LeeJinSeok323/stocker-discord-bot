@@ -1,18 +1,18 @@
 import schedule
 import time
 import threading
-from core.stock_fetcher import batch_fetch_stocks
-from scripts.update_stocks_batch import update_stocks
+from core.init_stock_data import init_stock_data
+from scripts.sync_ticker_list import update_stocks
 
 def run_scheduler():
     print("[scheduler] Starting stock update jobs...", flush=True)
     schedule.every(7).days.do(update_stocks)
-    print("[scheduler] Starting batch_fetch_stocks...", flush=True)
-    schedule.every(1).hours.do(batch_fetch_stocks)
+    print("[scheduler] Starting init_stock_data...", flush=True)
+    schedule.every(1).hours.do(init_stock_data)
 
     print("[scheduler] Running initial jobs...", flush=True)
     update_stocks()
-    batch_fetch_stocks()
+    init_stock_data()
 
     while True:
         schedule.run_pending()
