@@ -19,6 +19,7 @@ def update_stocks():
         records = []
 
         exclude_exchanges = ["OTC", "CBOE", "UNKNOWN", ""]
+        trash_suffixes = ['-P', '.P', '-W', '.W', '-R', '.R', '-U', '.U', '+']
 
         for row in rows:
             ticker = str(row[2]).upper().strip()
@@ -27,10 +28,15 @@ def update_stocks():
             if exchange in exclude_exchanges:
                 continue
 
-            if len(ticker) > 4:
+            if len(ticker) > 5:
                 continue
 
-            if not ticker.isalpha():
+            if any(s in ticker for s in trash_suffixes):
+                continue
+
+            ticker = ticker.replace(' ', '-').replace('.', '-')
+
+            if not all(c.isalnum() or c == '-' for c in ticker):
                 continue
 
             active_tickers.append(ticker)
